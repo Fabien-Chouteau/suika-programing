@@ -12,7 +12,7 @@ project Suika_Programing is
    end Compiler;
 
    package Linker is
-      for Switches ("Ada") use ("-lraylib", "-lm", "-lchipmunk");
+      for Switches ("Ada") use ("-lraylib");
    end Linker;
 
    package Binder is

@@ -1,13 +1,10 @@
-
-with System;
+with System; use System;
 
 with Interfaces.C; use Interfaces.C;
+with Ada.Unchecked_Conversion;
 
-with Chipmunk; use Chipmunk;
-with Chipmunk.Bodies; use Chipmunk.Bodies;
-with Chipmunk.Spaces; use Chipmunk.Spaces;
-with Chipmunk.Shapes; use Chipmunk.Shapes;
-with Chipmunk.Arbiters;
+with Box2D; use Box2D;
+with Box2D_Raylib_Debug;
 
 with Raylib; use Raylib;
 with Raylib.GUI;
@@ -25,13 +22,30 @@ procedure Suika_Programing is
    package Game_Resources
    is new Resources (Suika_Programing_Config.Crate_Name);
 
-   Space : constant cpSpace := NewSpace;
-
    Width  : constant := 800;
    Height : constant := 600;
 
    type Object_Kind is (Cherry, Grape, Strawberry, Orange, Apple, Pear,
-                        Dekopon, Peach, Pineapple, Melon, Watermelon);
+                        Dekopon, Peach, Pineapple, Melon, Watermelon)
+     with Size => Standard'Address_Size;
+
+   for Object_Kind use
+     (Cherry => 1,
+      Grape => 2,
+      Strawberry => 3,
+      Orange => 4,
+      Apple => 5,
+      Pear => 6,
+      Dekopon => 7,
+      Peach => 8,
+      Pineapple => 9,
+      Melon => 10,
+      Watermelon => 11);
+
+   function Kind_To_Addr
+   is new Ada.Unchecked_Conversion (Object_Kind, System.Address);
+   function Addr_To_Kind
+   is new Ada.Unchecked_Conversion (System.Address, Object_Kind);
 
    subtype Drop_Object_Kind is Object_Kind range Object_Kind'First .. Pear;
    package Random_Object is new Ada.Numerics.Discrete_Random (Drop_Object_Kind);
@@ -50,7 +64,7 @@ procedure Suika_Programing is
    Melon_Radius      : constant := Pineapple_Radius  * 1.2;
    Watermelon_Radius : constant := Melon_Radius      * 1.2;
 
-   Radius : constant array (Object_Kind) of cpFloat :=
+   Radius : constant array (Object_Kind) of C_float :=
      (Cherry      => Cherry_Radius,
       Grape       => Grape_Radius,
       Strawberry  => Strawberry_Radius,
@@ -76,17 +90,17 @@ procedure Suika_Programing is
       Melon       => 55,
       Watermelon  => 66);
 
-   function Mass (Kind : Object_Kind) return cpFloat
-   is (cpAreaForCircle (Radius (Kind), 0.0));
+   --  function Mass (Kind : Object_Kind) return C_float
+   --  is (cpAreaForCircle (Radius (Kind), 0.0));
+   --
+   --  function Moment (Kind : Object_Kind) return C_float
+   --  is (cpMomentForCircle (Mass (Kind), Radius (Kind), 0.0, (0.0, 0.0)));
 
-   function Moment (Kind : Object_Kind) return cpFloat
-   is (cpMomentForCircle (Mass (Kind), Radius (Kind), 0.0, (0.0, 0.0)));
-
-   function Elasticity (Kind : Object_Kind) return cpFloat
+   function Elasticity (Kind : Object_Kind) return C_float
    is (case Kind is
           when others => 0.5);
 
-   function Friction (Kind : Object_Kind) return cpFloat
+   function Friction (Kind : Object_Kind) return C_float
    is (case Kind is
           when others => 0.5);
 
@@ -109,39 +123,53 @@ procedure Suika_Programing is
 
    type Merge_Data is record
       Kind : Object_Kind;
-      A, B : cpShape;
+      A, B : BodyId;
    end record;
 
    package Merge_Lists is new Ada.Containers.Doubly_Linked_Lists (Merge_Data);
 
    Bodies_To_Merge : Merge_Lists.List;
 
-   --  Object_Color : constant array (Object_Kind) of Raylib.Color :=
-   --    (Bouncy_Ball => GREEN,
-   --     Heavy_Ball  => RED,
-   --     Medium_Box  => VIOLET);
+   World_Id : WorldId := (0, 0);
 
-   procedure Add_Object (X, Y : cpFloat; Kind : Object_Kind) is
-      Bod : cpBody;
-      Shape : cpShape;
+   type Circle_Data is record
+      Id : BodyId;
+      Kind : Object_Kind;
+   end record;
+
+   package Circles_Lists
+   is new Ada.Containers.Doubly_Linked_Lists (Circle_Data);
+   Circles : Circles_Lists.List;
+
+   procedure Add_Object (X, Y : C_float; Kind : Object_Kind) is
+
+      Body_Def : aliased BodyDef := DefaultBodyDef;
+      Body_Id : BodyId;
+
+      Shape_Def : aliased ShapeDef := DefaultShapeDef;
+      C : aliased Circle;
+
    begin
-      Bod := NewBody (Mass (Kind), Moment (Kind));
-      SetPosition (Bod, (X, Y));
-      Bod := AddBody (Space, Bod);
 
-      Shape := cpCircleShapeNew (Bod, Radius (Kind), (0.0, 0.0));
-      SetElasticity (Shape, Elasticity (Kind));
-      SetFriction (Shape, Friction (Kind));
-      SetCollisionType (Shape, Kind'Enum_Rep);
+      Body_Def.position := (X, Y);
+      Body_Def.type_K := B2_dynamicBody;
+      Body_Id := CreateBody (World_Id, Body_Def'Access);
 
-      Shape := AddShape (Space, Shape);
-      pragma Unreferenced (Shape);
+      Shape_Def.material.restitution := Elasticity (Kind);
+      Shape_Def.material.friction := Friction (Kind);
+      Shape_Def.userData := Kind_To_Addr (Kind);
+      Shape_Def.enableContactEvents := True;
+      C.center := (0.0, 0.0);
+      C.radius := Radius (Kind);
+      CreateCircleShape (Body_Id, Shape_Def'Access, C'Access);
+
+      Circles.Append ((Body_Id, Kind));
    end Add_Object;
 
    type Segment_Data is record
-      A, B : cpVect;
-      Radius : cpFloat;
-      Bod : cpBody;
+      A, B : Vec2;
+      Radius : C_float;
+      Bod : BodyId;
    end record;
 
    package Segment_Lists
@@ -149,115 +177,57 @@ procedure Suika_Programing is
 
    Segments : Segment_Lists.List;
 
-   procedure Add_Segment (A, B : cpVect; Radius : cpFloat) is
-      Segment_Body : cpBody;
-      Segment_Shape : cpShape;
+   procedure Add_Segment (A, B : Vec2; Radius : C_float) is
+      Body_Def : aliased BodyDef := DefaultBodyDef;
+      Body_Id : BodyId;
+
+      Shape_Def : aliased ShapeDef := DefaultShapeDef;
+      Seg : aliased Segment := (A, B);
+
    begin
-      Segment_Body := NewBody (0.0, Infinity);
-      SetType (Segment_Body, Static);
-      SetPosition (Segment_Body, (0.0, 0.0));
-      Segment_Body := AddBody (Space, Segment_Body);
 
-      Segment_Shape := cpSegmentShapeNew (Segment_Body, A, B, Radius);
-      SetElasticity (Segment_Shape, 0.5);
-      SetFriction (Segment_Shape, 100.0);
-      SetCollisionType (Segment_Shape, Object_Kind'Last'Enum_Rep + 1);
+      Body_Def.type_K := B2_staticBody;
+      Body_Def.position := (0.0, 0.0);
+      Body_Id := CreateBody (World_Id, Body_Def'Access);
 
-      Segment_Shape := AddShape (Space, Segment_Shape);
+      Shape_Def.material.restitution := 0.5;
+      Shape_Def.material.friction := 100.0;
+      CreateSegmentShape (Body_Id, Shape_Def'Access, Seg'Access);
 
-      Segments.Append ((A, B, Radius, Segment_Body));
+      Segments.Append ((A, B, Radius, Body_Id));
    end Add_Segment;
-
-   -------------------
-   -- PostSolveFunc --
-   -------------------
-
-   procedure PostSolveFunc (Arb : cpArbiter;
-                            Space : cpSpace;
-                            User_Data : cpDataPointer)
-     with Convention => C;
-
-   procedure PostSolveFunc (Arb : cpArbiter;
-                            Space : cpSpace;
-                            User_Data : cpDataPointer)
-   is
-      pragma Unreferenced (Space, User_Data);
-      use Chipmunk.Arbiters;
-      A, B : aliased cpShape;
-   begin
-      GetShapes (Arb, A'Access, B'Access);
-      declare
-         K : constant Object_Kind :=
-           Object_Kind'Enum_Val (GetCollisionType (A));
-      begin
-         Bodies_To_Merge.Append ((K, A, B));
-      end;
-   end PostSolveFunc;
 
    -----------------
    -- Draw_Object --
    -----------------
 
-   procedure Draw_Object (Kind : Object_Kind; Pos : cpVect; Angle : cpFloat) is
+   procedure Draw_Object (Kind : Object_Kind; Pos : Vec2; Angle : C_float) is
       Tex : Texture renames Textures (Kind);
-      Rad : constant C_float := C_float (Radius (Kind));
+      Rad : constant C_float := Radius (Kind);
    begin
       DrawTexturePro (Tex,
                       source => (0.0, 0.0,
                                  C_float (Tex.width), C_float (Tex.height)),
-                      dest =>  (C_float (Pos.X),
-                                C_float (Height) - C_float (Pos.Y),
+                      dest =>  (Pos.x,
+                                C_float (Height) - Pos.y,
                                 Rad * 2.0,
                                 Rad * 2.0),
                       origin => (Rad, Rad),
-                      rotation => -C_float (Angle) * 45.0,
+                      rotation => -Angle * 45.0,
                       tint =>  Raylib.WHITE);
    end Draw_Object;
 
    Gameover : Boolean := False;
    Score : Natural := 0;
 
-   --------------------
-   -- For_Each_Shape --
-   --------------------
-
-   procedure For_Each_Shape (Shape : cpShape; Data : cpDataPointer)
-     with Convention => C;
-
-   procedure For_Each_Shape (Shape : cpShape; Data : cpDataPointer) is
-      pragma Unreferenced (Data);
-      Bod : constant cpBody := GetBody (Shape);
-      Pos : constant cpVect := GetPosition (Bod);
-      Kind : constant Object_Kind :=
-        Object_Kind'Enum_Val (GetCollisionType (Shape));
-   begin
-      if Pos.Y < -20.0 then
-         Gameover := True;
-      end if;
-
-      Draw_Object (Kind, Pos, GetAngle (Bod));
-   end For_Each_Shape;
-
    Next_To_Drop  : Object_Kind := Object_Kind'First;
    Drop_Timeout  : Ada.Real_Time.Time := Ada.Real_Time.Clock;
-   Drop_Height   : constant cpFloat := cpFloat (Height) - 40.0;
+   Drop_Height   : constant C_float := C_float (Height) - 40.0;
    Drop_Interval : constant Ada.Real_Time.Time_Span :=
      Ada.Real_Time.Milliseconds (300);
 
    procedure Setup_Game is
-      package Shape_Lists is new Ada.Containers.Doubly_Linked_Lists (cpShape);
-
-      Shape_List : Shape_Lists.List;
-
-      procedure List_Each_Shape (Shape : cpShape; Data : cpDataPointer)
-        with Convention => C;
-
-      procedure List_Each_Shape (Shape : cpShape; Data : cpDataPointer) is
-         pragma Unreferenced (Data);
-      begin
-         Shape_List.Append (Shape);
-      end List_Each_Shape;
-
+      World_Def : aliased WorldDef := DefaultWorldDef;
    begin
       Score := 0;
       Next_To_Drop := Object_Kind'First;
@@ -265,29 +235,25 @@ procedure Suika_Programing is
       Gameover := False;
       Random_Object.Reset (Obj_Gen);
 
-      --  Cleanup space
-      EachShape (Space, List_Each_Shape'Unrestricted_Access,
-                        System.Null_Address);
-      for Shape of Shape_List loop
-         declare
-            Bod : constant cpBody := GetBody (Shape);
-         begin
-            RemoveShape (Space, Shape);
-            RemoveBody (Space, Bod);
-            Destroy (Shape);
-            Destroy (Bod);
-         end;
-      end loop;
+      Segments.Clear;
+      Circles.Clear;
+
+      if World_Id /= (0, 0) then
+         DestroyWorld (World_Id);
+      end if;
+
+      World_Def.gravity := (0.0, -900.0);
+      World_Id := CreateWorld (World_Def'Access);
 
       --  Set borders
-      Add_Segment ((cpFloat (Width) * 0.25, -50.0),
-                   (cpFloat (Width) * 0.75, -50.0),
-                   60.0);
-      Add_Segment ((cpFloat (Width) * 0.25, cpFloat (Height) * 0.0),
-                   (cpFloat (Width) * 0.25, cpFloat (Height) * 0.8),
+      Add_Segment ((C_float (Width) * 0.25, 5.0),
+                   (C_float (Width) * 0.75, 5.0),
                    5.0);
-      Add_Segment ((cpFloat (Width) * 0.75, cpFloat (Height) * 0.8),
-                   (cpFloat (Width) * 0.75, cpFloat (Height) * 0.0),
+      Add_Segment ((C_float (Width) * 0.25, C_float (Height) * 0.0),
+                   (C_float (Width) * 0.25, C_float (Height) * 0.8),
+                   5.0);
+      Add_Segment ((C_float (Width) * 0.75, C_float (Height) * 0.8),
+                   (C_float (Width) * 0.75, C_float (Height) * 0.0),
                    5.0);
    end Setup_Game;
 
@@ -295,25 +261,45 @@ procedure Suika_Programing is
      Ada.Real_Time.Milliseconds (1000 / 60);
 
    Next_Release : Ada.Real_Time.Time;
+
+   ---------------
+   -- To_Raylib --
+   ---------------
+
+   function To_Raylib (Pos : Vec2) return Raylib.Vector2 is
+   begin
+      return (Pos.x, C_float (Height) - Pos.y);
+   end To_Raylib;
+
+   Debug_Enabled : Boolean := False;
+   Debug_Draw : aliased DebugDraw := DefaultDebugDraw;
+   package Dbg_Draw is new Box2D_Raylib_Debug (To_Raylib);
 begin
+   Debug_Draw.drawShapes := True;
+   Debug_Draw.drawBodyNames := True;
+   Debug_Draw.drawBounds := True;
+   Debug_Draw.drawShapes := True;
+   Debug_Draw.drawJoints := True;
+   Debug_Draw.drawJointExtras := True;
+   Debug_Draw.drawBounds := True;
+   Debug_Draw.drawMass := False;
+   Debug_Draw.drawBodyNames := True;
+   Debug_Draw.drawContacts := True;
+   Debug_Draw.drawGraphColors := True;
+   Debug_Draw.drawContactNormals := True;
+   Debug_Draw.drawContactImpulses := True;
+   Debug_Draw.drawContactFeatures := True;
+   Debug_Draw.drawFrictionImpulses := True;
+   Debug_Draw.drawIslands := True;
+
+   Dbg_Draw.Setup_Draw_Debug (Debug_Draw);
 
    Raylib.InitWindow (Width, Height, "Watermelon Chipmunk Example");
-
-   SetIterations (Space, 10);
-   SetGravity (Space, (0.0, -900.0));
-   SetSleepTimeThreshold (Space, 0.5);
 
    for K in Object_Kind loop
       Images (K) := Raylib.LoadImage
         (Game_Resources.Resource_Path & Image_File (K));
       Textures (K) := Raylib.LoadTextureFromImage (Images (K));
-
-      declare
-         Test : constant access cpCollisionHandler :=
-           AddCollisionHandler (Space, K'Enum_Rep, K'Enum_Rep);
-      begin
-         Test.postSolveFunc := PostSolveFunc'Unrestricted_Access;
-      end;
    end loop;
 
    Setup_Game;
@@ -332,53 +318,72 @@ begin
       then
          Drop_Timeout := Clock + Drop_Interval;
 
-         Add_Object (cpFloat (GetMousePosition.x),
+         Add_Object (GetMousePosition.x,
                      Drop_Height,
                      Next_To_Drop);
 
          Next_To_Drop := Random_Object.Random (Obj_Gen);
       end if;
 
-      if IsMouseButtonPressed (MOUSE_BUTTON_RIGHT) then
-         Add_Object (cpFloat (GetMousePosition.x),
-                     cpFloat (C_float (Height) - GetMousePosition.y),
-                     Strawberry);
-      end if;
-      if IsMouseButtonPressed (MOUSE_BUTTON_MIDDLE) then
-         Add_Object (cpFloat (GetMousePosition.x),
-                     cpFloat (C_float (Height) - GetMousePosition.y),
-                     Object_Kind'Last);
+      if IsKeyPressed (KEY_F1) then
+         Debug_Enabled := not Debug_Enabled;
       end if;
 
       if not Gameover then
          Bodies_To_Merge.Clear;
-         Step (Space, 1.0 / 60.0);
+         World_Step (World_Id, 1.0 / 60.0, 100);
+
+         declare
+            Contacts : constant ContactEvents :=
+              World_GetContactEvents (World_Id);
+         begin
+            if Contacts.beginCount > 0 then
+               for Idx in unsigned range  0 .. unsigned (Contacts.beginCount - 1)
+               loop
+                  declare
+                     Shape_A : constant ShapeId :=
+                       Contacts.beginEvents (Idx).shapeIdA;
+                     Shape_B : constant ShapeId :=
+                       Contacts.beginEvents (Idx).shapeIdB;
+
+                     Data_A : constant System.Address :=
+                       Shape_GetUserData (Shape_A);
+                     Data_B : constant System.Address :=
+                       Shape_GetUserData (Shape_B);
+                  begin
+                     if Data_A /= System.Null_Address
+                       and then
+                         Data_A = Data_B
+                     then
+                        Bodies_To_Merge.Append
+                          ((Kind => Addr_To_Kind (Data_A),
+                            A => Shape_GetBody (Shape_A),
+                            B => Shape_GetBody (Shape_B)));
+                     end if;
+                  end;
+               end loop;
+            end if;
+         end;
 
          for Elt of Bodies_To_Merge loop
-            declare
-               AB : constant cpBody := GetBody (Elt.A);
-               BB : constant cpBody := GetBody (Elt.B);
-
-               A_Pos : constant cpVect := GetPosition (AB);
-               B_Pos : constant cpVect := GetPosition (BB);
-            begin
-               if ContainsBody (Space, AB) and then ContainsBody (Space, BB)
-               then
-                  RemoveShape (Space, Elt.A);
-                  RemoveShape (Space, Elt.B);
-                  RemoveBody (Space, AB);
-                  RemoveBody (Space, BB);
+            if Body_IsValid (Elt.A) and then Body_IsValid (Elt.B) then
+               declare
+                  A_Pos : constant Vec2 := Body_GetPosition (Elt.A);
+                  B_Pos : constant Vec2 := Body_GetPosition (Elt.B);
+               begin
+                  DestroyBody (Elt.A);
+                  DestroyBody (Elt.B);
 
                   Score := Score + Points (Elt.Kind);
 
                   if Elt.Kind /= Object_Kind'Last then
                      --  Merging the last object doesn't produce a new object
-                     Add_Object ((A_Pos.X + B_Pos.X) / 2.0,
-                                 (A_Pos.Y + B_Pos.Y) / 2.0,
+                     Add_Object ((A_Pos.x + B_Pos.x) / 2.0,
+                                 (A_Pos.y + B_Pos.y) / 2.0,
                                  Object_Kind'Succ (Elt.Kind));
                   end if;
-               end if;
-            end;
+               end;
+            end if;
          end loop;
       end if;
 
@@ -388,8 +393,7 @@ begin
 
       if not Gameover and then Drop_Timeout < Ada.Real_Time.Clock then
          Draw_Object (Next_To_Drop,
-                      (cpFloat (GetMousePosition.x),
-                       Drop_Height),
+                      (GetMousePosition.x, Drop_Height),
                       0.0);
       end if;
 
@@ -414,8 +418,21 @@ begin
          10,
          Raylib.WHITE);
 
-      EachShape (Space, For_Each_Shape'Unrestricted_Access,
-                 System.Null_Address);
+      for C of Circles loop
+         if Body_IsValid (C.Id) then
+            declare
+               P : constant Vec2 := Body_GetPosition (C.Id);
+               Angle : constant C_float := GetAngle (Body_GetRotation (C.Id));
+            begin
+
+               if P.y < -20.0 then
+                  Gameover := True;
+               end if;
+
+               Draw_Object (C.Kind, (P.x, P.y), Angle);
+            end;
+         end if;
+      end loop;
 
       DrawText (text => "Score:" & Score'Img,
                 posX => 0,
@@ -448,7 +465,10 @@ begin
          end;
       end if;
 
-      --  Raylib.DrawFPS (0, 0);
+      if Debug_Enabled then
+         World_Draw (World_Id, Debug_Draw'Access);
+         Raylib.DrawFPS (0, 0);
+      end if;
       EndDrawing;
    end loop;
 

@@ -13,5 +13,11 @@ executables = ["suika_programing"]
 
 [[depends-on]]
 raylib = "^1.0.0"
-chipmunk2d = "~0.1.0"
 resources = "~0.1.0"
+box2d = "*"
+box2d_raylib_debug = "*"
+
+[[pins]]
+box2d = { url='git@github.com:Fabien-Chouteau/box2d-ada.git' }
+box2d_raylib_debug = { url='git@github.com:Fabien-Chouteau/box2d-ada.git', subdir="box2d_raylib_debug/" }
+
