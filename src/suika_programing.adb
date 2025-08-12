@@ -152,7 +152,7 @@ procedure Suika_Programing is
    begin
 
       Body_Def.position := (X, Y);
-      Body_Def.type_K := B2_dynamicBody;
+      Body_Def.type_K := DynamicBody;
       Body_Id := CreateBody (World_Id, Body_Def'Access);
 
       Shape_Def.material.restitution := Elasticity (Kind);
@@ -165,7 +165,6 @@ procedure Suika_Programing is
 
       Circles.Append ((Body_Id, Kind));
    end Add_Object;
-
    type Segment_Data is record
       A, B : Vec2;
       Radius : C_float;
@@ -186,7 +185,7 @@ procedure Suika_Programing is
 
    begin
 
-      Body_Def.type_K := B2_staticBody;
+      Body_Def.type_K := StaticBody;
       Body_Def.position := (0.0, 0.0);
       Body_Id := CreateBody (World_Id, Body_Def'Access);
 
@@ -331,11 +330,11 @@ begin
 
       if not Gameover then
          Bodies_To_Merge.Clear;
-         World_Step (World_Id, 1.0 / 60.0, 100);
+         Step (World_Id, 1.0 / 60.0, 100);
 
          declare
             Contacts : constant ContactEvents :=
-              World_GetContactEvents (World_Id);
+              GetContactEvents (World_Id);
          begin
             if Contacts.beginCount > 0 then
                for Idx in unsigned range  0 .. unsigned (Contacts.beginCount - 1)
@@ -347,9 +346,9 @@ begin
                        Contacts.beginEvents (Idx).shapeIdB;
 
                      Data_A : constant System.Address :=
-                       Shape_GetUserData (Shape_A);
+                       GetUserData (Shape_A);
                      Data_B : constant System.Address :=
-                       Shape_GetUserData (Shape_B);
+                       GetUserData (Shape_B);
                   begin
                      if Data_A /= System.Null_Address
                        and then
@@ -357,8 +356,8 @@ begin
                      then
                         Bodies_To_Merge.Append
                           ((Kind => Addr_To_Kind (Data_A),
-                            A => Shape_GetBody (Shape_A),
-                            B => Shape_GetBody (Shape_B)));
+                            A => GetBody (Shape_A),
+                            B => GetBody (Shape_B)));
                      end if;
                   end;
                end loop;
@@ -366,10 +365,10 @@ begin
          end;
 
          for Elt of Bodies_To_Merge loop
-            if Body_IsValid (Elt.A) and then Body_IsValid (Elt.B) then
+            if IsValid (Elt.A) and then IsValid (Elt.B) then
                declare
-                  A_Pos : constant Vec2 := Body_GetPosition (Elt.A);
-                  B_Pos : constant Vec2 := Body_GetPosition (Elt.B);
+                  A_Pos : constant Vec2 := GetPosition (Elt.A);
+                  B_Pos : constant Vec2 := GetPosition (Elt.B);
                begin
                   DestroyBody (Elt.A);
                   DestroyBody (Elt.B);
@@ -419,10 +418,10 @@ begin
          Raylib.WHITE);
 
       for C of Circles loop
-         if Body_IsValid (C.Id) then
+         if IsValid (C.Id) then
             declare
-               P : constant Vec2 := Body_GetPosition (C.Id);
-               Angle : constant C_float := GetAngle (Body_GetRotation (C.Id));
+               P : constant Vec2 := GetPosition (C.Id);
+               Angle : constant C_float := GetAngle (GetRotation (C.Id));
             begin
 
                if P.y < -20.0 then
@@ -466,7 +465,7 @@ begin
       end if;
 
       if Debug_Enabled then
-         World_Draw (World_Id, Debug_Draw'Access);
+         Draw (World_Id, Debug_Draw'Access);
          Raylib.DrawFPS (0, 0);
       end if;
       EndDrawing;
